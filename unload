@@ -1,0 +1,5 @@
+#!/bin/sh
+module="dirbtree"
+modprobe -r ${module} || exit 1
+rm -f /dev/${module}
+
