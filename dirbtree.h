@@ -14,11 +14,12 @@
 
 #include <linux/cdev.h>
 #include <linux/mutex.h>
+#include <linux/sched.h>
 
-struct dt_dev_t
-{
+struct dt_dev_t {
 	struct mutex mutex;
 	struct cdev cdev;
 	char data[32];
+	pid_t last_pid;
 };
 

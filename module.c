@@ -17,6 +17,8 @@
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/poll.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 #include "dirbtree.h"
 
 MODULE_LICENSE("GPL");
@@ -24,19 +26,29 @@ MODULE_AUTHOR("Huseyin Muhlis Olgac");
 MODULE_DESCRIPTION("Kernel Project Experiment");
 
 struct dt_dev_t dt_device;
-int dt_open (struct inode *inode, struct file *filp);
-int dt_release (struct inode *inode, struct file *filp);
-ssize_t dt_read (struct file *filp, char __user *buf, size_t count,
+static int dt_open (struct inode *inode, struct file *filp);
+static int dt_release (struct inode *inode, struct file *filp);
+static ssize_t dt_read (struct file *filp, char __user *buf, size_t count,
 		loff_t *pos);
-ssize_t dt_write (struct file *filp, const char __user *buf, size_t count,
+static ssize_t dt_write (struct file *filp, const char __user *buf, size_t count,
 		loff_t *pos);
 
-struct file_operations dt_fops = {
+static int dt_proc_open (struct inode *inode, struct file *filp);
+static const struct file_operations dt_fops = {
 	.open = dt_open,
 	.release = dt_release,
 	.read = dt_read,
 	.write = dt_write,
 };
+
+static const struct file_operations dt_proc_fops = {
+	.open = dt_proc_open,
+	.release = single_release,
+	.read = seq_read,
+	.write = dt_write,
+	.llseek = seq_lseek,
+};
+
 static int alloc_device (void)
 {
 	dev_t dev_num;
@@ -66,33 +78,46 @@ static void free_device (void)
 static int dirbtree_init (void)
 {
 	int error;
+	struct proc_dir_entry* pde;
 	printk(KERN_DEBUG "dirbtree_init\n");
 	error = alloc_device();
+	if (error)
+		goto noalloc;
+	pde = proc_create("dirbtree", 0777, NULL, &dt_proc_fops);
+	error = -EFAULT;
+	if (!pde)
+		goto nopde;
+	return 0;
+nopde:
+	printk(KERN_DEBUG "proc_create fail\n");
+	free_device();
+noalloc:
 	return error;
 }
 
 static void dirbtree_exit (void)
 {
 	printk(KERN_DEBUG "dirbtree_exit\n");
+	remove_proc_entry("dirbtree", NULL);
 	free_device();
 }
 
 module_init(dirbtree_init);
 module_exit(dirbtree_exit);
 
-int dt_open (struct inode *inode, struct file *filp)
+static int dt_open (struct inode *inode, struct file *filp)
 {
 	printk(KERN_DEBUG "opened device\n");
 	filp->private_data = &dt_device;
 	return 0;
 }
-int dt_release (struct inode *inode, struct file *filp)
+static int dt_release (struct inode *inode, struct file *filp)
 {
 	printk(KERN_DEBUG "released device\n");
 	return 0;
 }
 
-ssize_t dt_read (struct file *filp, char __user *buf, size_t count,
+static ssize_t dt_read (struct file *filp, char __user *buf, size_t count,
 		loff_t *pos)
 {
 	size_t len;
@@ -100,16 +125,20 @@ ssize_t dt_read (struct file *filp, char __user *buf, size_t count,
 	len = count < len ? count : len;
 	if (mutex_lock_interruptible(&dt_device.mutex))
 		return -ERESTARTSYS;
-	if (len > 0)
-	{
-		copy_to_user(buf, dt_device.data, len);
+	if (current->pid == dt_device.last_pid) {
+		printk(KERN_DEBUG "this process again? just return eof..\n");
+		mutex_unlock(&dt_device.mutex);
+		return 0;
 	}
+	if (len > 0)
+		copy_to_user(buf, dt_device.data, len);
+	dt_device.last_pid = current->pid;
 	mutex_unlock(&dt_device.mutex);
 	printk(KERN_DEBUG "reading: %s\n", dt_device.data);
 	pos = 0;
 	return len;
 }
-ssize_t dt_write (struct file *filp, const char __user *buf, size_t count,
+static ssize_t dt_write (struct file *filp, const char __user *buf, size_t count,
 		loff_t *pos)
 {
 	if (count > 31)
@@ -118,8 +147,20 @@ ssize_t dt_write (struct file *filp, const char __user *buf, size_t count,
 		return -ERESTARTSYS;
 	copy_from_user(dt_device.data, buf, count);
 	dt_device.data[count] = 0;
+	dt_device.last_pid = 0;
 	mutex_unlock(&dt_device.mutex);
 	printk(KERN_DEBUG "writing: %s\n", dt_device.data);
 	return count;
 }
-
+static int _dt_proc_show(struct seq_file *m, void *v)
+{
+	if (mutex_lock_interruptible(&dt_device.mutex))
+		return -ERESTARTSYS;
+	seq_printf(m, "Device data: %s\n", dt_device.data);
+	mutex_unlock(&dt_device.mutex);
+	return 0;
+}
+static int dt_proc_open (struct inode *inode, struct file *filp)
+{
+	return single_open(filp, _dt_proc_show, NULL);
+}
