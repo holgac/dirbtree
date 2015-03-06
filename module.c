@@ -41,6 +41,7 @@ static int alloc_device (void)
 {
 	dev_t dev_num;
 	int error;
+	mutex_init(&dt_device.mutex);
 	error = alloc_chrdev_region(&dev_num, 0, 1, "dirbtree");
 	if (error)
 		goto chrdev_error;
@@ -97,10 +98,13 @@ ssize_t dt_read (struct file *filp, char __user *buf, size_t count,
 	size_t len;
 	len = strlen(dt_device.data);
 	len = count < len ? count : len;
+	if (mutex_lock_interruptible(&dt_device.mutex))
+		return -ERESTARTSYS;
 	if (len > 0)
 	{
 		copy_to_user(buf, dt_device.data, len);
 	}
+	mutex_unlock(&dt_device.mutex);
 	printk(KERN_DEBUG "reading: %s\n", dt_device.data);
 	pos = 0;
 	return len;
@@ -110,8 +114,11 @@ ssize_t dt_write (struct file *filp, const char __user *buf, size_t count,
 {
 	if (count > 31)
 		count = 31;
+	if (mutex_lock_interruptible(&dt_device.mutex))
+		return -ERESTARTSYS;
 	copy_from_user(dt_device.data, buf, count);
 	dt_device.data[count] = 0;
+	mutex_unlock(&dt_device.mutex);
 	printk(KERN_DEBUG "writing: %s\n", dt_device.data);
 	return count;
 }

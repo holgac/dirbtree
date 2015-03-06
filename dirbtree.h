@@ -13,9 +13,11 @@
  * */
 
 #include <linux/cdev.h>
+#include <linux/mutex.h>
 
 struct dt_dev_t
 {
+	struct mutex mutex;
 	struct cdev cdev;
 	char data[32];
 };
