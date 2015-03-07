@@ -22,4 +22,8 @@ struct dt_dev_t {
 	char data[32];
 	pid_t last_pid;
 };
+#define DT_IOC_MAGIC 't'
+
+#define DT_IOC_PRINT _IO(DT_IOC_MAGIC, 0)
+#define DT_IOC_MAXNR 1
 

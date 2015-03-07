@@ -29,9 +29,10 @@ struct dt_dev_t dt_device;
 static int dt_open (struct inode *inode, struct file *filp);
 static int dt_release (struct inode *inode, struct file *filp);
 static ssize_t dt_read (struct file *filp, char __user *buf, size_t count,
-		loff_t *pos);
-static ssize_t dt_write (struct file *filp, const char __user *buf, size_t count,
-		loff_t *pos);
+						loff_t *pos);
+static ssize_t dt_write (struct file *filp, const char __user *buf,
+						size_t count, loff_t *pos);
+long dt_ioctl (struct file *filp, unsigned int cmd, unsigned long arg);
 
 static int dt_proc_open (struct inode *inode, struct file *filp);
 static const struct file_operations dt_fops = {
@@ -39,6 +40,7 @@ static const struct file_operations dt_fops = {
 	.release = dt_release,
 	.read = dt_read,
 	.write = dt_write,
+	.unlocked_ioctl = dt_ioctl,
 };
 
 static const struct file_operations dt_proc_fops = {
@@ -136,6 +138,7 @@ static ssize_t dt_read (struct file *filp, char __user *buf, size_t count,
 	mutex_unlock(&dt_device.mutex);
 	printk(KERN_DEBUG "reading: %s\n", dt_device.data);
 	pos = 0;
+	printk(KERN_DEBUG "nonblock: %u\n", (u32)(filp->f_flags & O_NONBLOCK));
 	return len;
 }
 static ssize_t dt_write (struct file *filp, const char __user *buf, size_t count,
@@ -164,3 +167,24 @@ static int dt_proc_open (struct inode *inode, struct file *filp)
 {
 	return single_open(filp, _dt_proc_show, NULL);
 }
+long dt_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	int err = 0;
+	printk(KERN_DEBUG "ioctl cmd: %X\n", cmd);
+	printk(KERN_DEBUG "sample ioctl cmd: %X\n", DT_IOC_PRINT);
+	if (_IOC_TYPE(cmd) != DT_IOC_MAGIC) return -ENOTTY;
+	if (_IOC_NR(cmd) > DT_IOC_MAXNR) return -ENOTTY;
+	if (_IOC_DIR(cmd) & _IOC_READ)
+		err = !access_ok(VERIFY_WRITE, (void __user *)arg, _IOC_SIZE(cmd));
+	else if (_IOC_DIR(cmd) & _IOC_WRITE)
+		err =  !access_ok(VERIFY_READ, (void __user *)arg, _IOC_SIZE(cmd));
+	if (err)
+		return -EFAULT;
+	switch(cmd) {
+		case DT_IOC_PRINT:
+			printk(KERN_DEBUG "data: %s\n", dt_device.data);
+			break;
+	}
+	return 0;
+}
+
