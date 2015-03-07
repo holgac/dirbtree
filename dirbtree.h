@@ -21,6 +21,7 @@ struct dt_dev_t {
 	struct cdev cdev;
 	char data[32];
 	pid_t last_pid;
+	struct fasync_struct* async_queue;
 };
 #define DT_IOC_MAGIC 't'
 

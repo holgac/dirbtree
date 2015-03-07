@@ -32,8 +32,8 @@ static ssize_t dt_read (struct file *filp, char __user *buf, size_t count,
 						loff_t *pos);
 static ssize_t dt_write (struct file *filp, const char __user *buf,
 						size_t count, loff_t *pos);
-long dt_ioctl (struct file *filp, unsigned int cmd, unsigned long arg);
-
+static long dt_ioctl (struct file *filp, unsigned int cmd, unsigned long arg);
+static int dt_fasync(int fd, struct file *filp, int mode);
 static int dt_proc_open (struct inode *inode, struct file *filp);
 static const struct file_operations dt_fops = {
 	.open = dt_open,
@@ -41,6 +41,7 @@ static const struct file_operations dt_fops = {
 	.read = dt_read,
 	.write = dt_write,
 	.unlocked_ioctl = dt_ioctl,
+	.fasync = dt_fasync,
 };
 
 static const struct file_operations dt_proc_fops = {
@@ -153,6 +154,10 @@ static ssize_t dt_write (struct file *filp, const char __user *buf, size_t count
 	dt_device.last_pid = 0;
 	mutex_unlock(&dt_device.mutex);
 	printk(KERN_DEBUG "writing: %s\n", dt_device.data);
+	if(dt_device.async_queue) {
+		printk(KERN_DEBUG "SIGIO\n");
+		kill_fasync(&dt_device.async_queue, SIGIO, POLL_IN);
+	}
 	return count;
 }
 static int _dt_proc_show(struct seq_file *m, void *v)
@@ -167,7 +172,7 @@ static int dt_proc_open (struct inode *inode, struct file *filp)
 {
 	return single_open(filp, _dt_proc_show, NULL);
 }
-long dt_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
+static long dt_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	int err = 0;
 	printk(KERN_DEBUG "ioctl cmd: %X\n", cmd);
@@ -186,5 +191,10 @@ long dt_ioctl (struct file *filp, unsigned int cmd, unsigned long arg)
 			break;
 	}
 	return 0;
+}
+
+static int dt_fasync(int fd, struct file *filp, int mode)
+{
+	return fasync_helper(fd, filp, mode, &dt_device.async_queue);
 }
 
