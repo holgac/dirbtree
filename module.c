@@ -117,6 +117,8 @@ static int dt_open (struct inode *inode, struct file *filp)
 static int dt_release (struct inode *inode, struct file *filp)
 {
 	printk(KERN_DEBUG "released device\n");
+	/* remove from fasync queue */
+	dt_fasync(-1, filp, 0);
 	return 0;
 }
 
