@@ -22,6 +22,9 @@ struct dt_dev_t {
 	char data[32];
 	pid_t last_pid;
 	struct fasync_struct* async_queue;
+	u32 write_count;
+	struct attribute data_attr;
+	struct attribute wc_attr;
 };
 #define DT_IOC_MAGIC 't'
 

@@ -35,6 +35,10 @@ static ssize_t dt_write (struct file *filp, const char __user *buf,
 static long dt_ioctl (struct file *filp, unsigned int cmd, unsigned long arg);
 static int dt_fasync(int fd, struct file *filp, int mode);
 static int dt_proc_open (struct inode *inode, struct file *filp);
+static ssize_t dt_sys_show(struct kobject *kobj, struct attribute *attr,
+							char *buffer);
+static ssize_t dt_sys_store(struct kobject *kobj, struct attribute *attr,
+							const char *buffer, size_t size);
 static const struct file_operations dt_fops = {
 	.open = dt_open,
 	.release = dt_release,
@@ -43,7 +47,11 @@ static const struct file_operations dt_fops = {
 	.unlocked_ioctl = dt_ioctl,
 	.fasync = dt_fasync,
 };
-
+static struct attribute* dt_sysfs_attrs[] = {
+	&dt_device.data_attr,
+	&dt_device.wc_attr,
+	NULL
+};
 static const struct file_operations dt_proc_fops = {
 	.open = dt_proc_open,
 	.release = single_release,
@@ -51,7 +59,10 @@ static const struct file_operations dt_proc_fops = {
 	.write = dt_write,
 	.llseek = seq_lseek,
 };
-
+static const struct sysfs_ops dt_sysfs_ops = {
+	.show = dt_sys_show,
+	.store = dt_sys_store,
+};
 static int alloc_device (void)
 {
 	dev_t dev_num;
@@ -64,6 +75,16 @@ static int alloc_device (void)
 	strcpy(dt_device.data, "EMPTY");
 	cdev_init(&dt_device.cdev, &dt_fops);
 	dt_device.cdev.owner = THIS_MODULE;
+	if(dt_device.cdev.kobj.ktype == NULL) {
+		printk(KERN_DEBUG "ktype null :/\n");
+		return 0;
+	}
+	dt_device.cdev.kobj.ktype->sysfs_ops = &dt_sysfs_ops;
+	dt_device.cdev.kobj.ktype->default_attrs = dt_sysfs_attrs;
+	dt_device.data_attr.mode = 0777;
+	dt_device.data_attr.name = "data";
+	dt_device.wc_attr.mode = 0444;
+	dt_device.wc_attr.name = "write_count";
 	error = cdev_add(&dt_device.cdev, dev_num, 1);
 	if (error)
 		goto chrdev_error;
@@ -90,6 +111,11 @@ static int dirbtree_init (void)
 	error = -EFAULT;
 	if (!pde)
 		goto nopde;
+	printk(KERN_DEBUG "parent: %lu\n", (unsigned long)dt_device.cdev.kobj.parent);
+	printk(KERN_DEBUG "kset: %lu\n", (unsigned long)dt_device.cdev.kobj.kset);
+	error = kobject_add(&dt_device.cdev.kobj, NULL, "dirbtree");
+	if(error)
+		printk(KERN_DEBUG "error: %d\n", error);
 	return 0;
 nopde:
 	printk(KERN_DEBUG "proc_create fail\n");
@@ -154,6 +180,7 @@ static ssize_t dt_write (struct file *filp, const char __user *buf, size_t count
 	copy_from_user(dt_device.data, buf, count);
 	dt_device.data[count] = 0;
 	dt_device.last_pid = 0;
+	dt_device.write_count += 1;
 	mutex_unlock(&dt_device.mutex);
 	printk(KERN_DEBUG "writing: %s\n", dt_device.data);
 	if(dt_device.async_queue) {
@@ -200,3 +227,42 @@ static int dt_fasync(int fd, struct file *filp, int mode)
 	return fasync_helper(fd, filp, mode, &dt_device.async_queue);
 }
 
+
+static ssize_t dt_sys_show(struct kobject *kobj, struct attribute *attr,
+							char *buffer)
+{
+	size_t len;
+	if(attr == &dt_device.data_attr) {
+		if(mutex_lock_interruptible(&dt_device.mutex))
+			return -ERESTARTSYS;
+		len = strlen(dt_device.data);
+		strncpy(buffer, dt_device.data, len+1);
+		mutex_unlock(&dt_device.mutex);
+		printk(KERN_DEBUG "sys show[%ld]: %s\n", len, buffer);
+	} else if(attr == &dt_device.wc_attr) {
+		if(mutex_lock_interruptible(&dt_device.mutex))
+			return -ERESTARTSYS;
+		len = sprintf(buffer, "%d\n", dt_device.write_count);
+		mutex_unlock(&dt_device.mutex);
+	} else 
+		return -EINVAL;
+	return len+1;
+}
+static ssize_t dt_sys_store(struct kobject *kobj, struct attribute *attr,
+							const char *buffer, size_t size)
+{
+	size_t sz;
+	if(attr == &dt_device.data_attr) {
+		sz = size;
+		if(sz > 31)
+			sz = 31;
+		if(mutex_lock_interruptible(&dt_device.mutex))
+			return -ERESTARTSYS;
+		strncpy(dt_device.data, buffer,sz);
+		dt_device.data[sz] = 0;
+		dt_device.write_count++;
+		mutex_unlock(&dt_device.mutex);
+		return sz;
+	}
+	return -EINVAL;
+}
